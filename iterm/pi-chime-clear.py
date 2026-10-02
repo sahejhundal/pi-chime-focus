@@ -58,7 +58,13 @@ def remove_group(session_id: str | None) -> None:
         log(f"remove error for {group}: {e}")
 
 
+KEYSTROKE_COOLDOWN = 1.5  # seconds between keystroke-triggered removes per session
+
+
 async def main(connection):
+    import asyncio
+    import time
+
     app = await iterm2.async_get_app(connection)
     log(f"started; terminal-notifier={TN}")
 
@@ -72,41 +78,62 @@ async def main(connection):
         sess = tab.current_session
         return sess.session_id if sess else None
 
-    # Seed the "currently focused" session WITHOUT clearing. We only clear on a
-    # real transition INTO a session (prev != now). This means: a notification
-    # that appears while you are already on its tab is NOT wiped by a spurious
-    # same-tab focus event; it stays until you switch away and back (or type,
-    # which the pi extension handles on its own).
-    last_focused = focused_session_id()
-    log(f"seeded focus = {last_focused}")
+    # ---- focus loop: clear on a real transition INTO a session -------------
+    # A notification that appears while you are already on its tab is NOT wiped
+    # by a spurious same-tab focus event; it stays until you switch away and
+    # back (handled here) or type (handled by the keystroke loop below).
+    async def focus_loop():
+        last_focused = focused_session_id()
+        log(f"seeded focus = {last_focused}")
+        async with iterm2.FocusMonitor(connection) as monitor:
+            while True:
+                update = await monitor.async_get_next_update()
 
-    async with iterm2.FocusMonitor(connection) as monitor:
-        while True:
-            update = await monitor.async_get_next_update()
+                # App went to the background -> ignore. Keep last_focused so that
+                # returning to the SAME tab (app switch, not tab switch) is not a
+                # transition and does not clear.
+                app_active = update.application_active
+                if app_active is not None and not getattr(app_active, "active", True):
+                    continue
 
-            # App went to the background -> ignore. Keep last_focused so that
-            # returning to the SAME tab (app switch, not tab switch) is not a
-            # transition and does not clear.
-            app_active = update.application_active
-            if app_active is not None and not getattr(app_active, "active", True):
-                continue
+                if update.active_session_changed is not None:
+                    sid = update.active_session_changed.session_id
+                else:
+                    sid = focused_session_id()
 
-            if update.active_session_changed is not None:
-                sid = update.active_session_changed.session_id
-            else:
-                # tab / window / app-activate change -> resolve current session
+                if sid is None:
+                    continue
+
+                nonlocal_last[0] = sid  # keep keystroke loop's view in sync
+                if sid != last_focused:
+                    log(f"transition {last_focused} -> {sid}; clearing {sid}")
+                    remove_group(sid)
+                    last_focused = sid
+                else:
+                    log(f"same focus {sid}; no clear")
+
+    # ---- keystroke loop: typing in a tab clears that tab's notification ----
+    # Keystroke objects carry no session id, but keystrokes go to the focused
+    # session, so we resolve the focused session at keypress time. Throttled per
+    # session so we don't spawn a terminal-notifier process on every keypress.
+    nonlocal_last = [focused_session_id()]
+    last_cleared: dict[str, float] = {}
+
+    async def keystroke_loop():
+        async with iterm2.KeystrokeMonitor(connection) as monitor:
+            while True:
+                await monitor.async_get()
                 sid = focused_session_id()
-
-            if sid is None:
-                # Unknown focus (no current window); don't treat as a transition.
-                continue
-
-            if sid != last_focused:
-                log(f"transition {last_focused} -> {sid}; clearing {sid}")
+                if not sid:
+                    continue
+                now = time.monotonic()
+                if now - last_cleared.get(sid, 0.0) < KEYSTROKE_COOLDOWN:
+                    continue
+                last_cleared[sid] = now
+                log(f"keystroke in {sid}; clearing {sid}")
                 remove_group(sid)
-                last_focused = sid
-            else:
-                log(f"same focus {sid}; no clear")
+
+    await asyncio.gather(focus_loop(), keystroke_loop())
 
 
 iterm2.run_forever(main)
