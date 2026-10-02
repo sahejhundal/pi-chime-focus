@@ -120,18 +120,25 @@ async def main(connection):
     last_cleared: dict[str, float] = {}
 
     async def keystroke_loop():
-        async with iterm2.KeystrokeMonitor(connection) as monitor:
-            while True:
-                await monitor.async_get()
-                sid = focused_session_id()
-                if not sid:
-                    continue
-                now = time.monotonic()
-                if now - last_cleared.get(sid, 0.0) < KEYSTROKE_COOLDOWN:
-                    continue
-                last_cleared[sid] = now
-                log(f"keystroke in {sid}; clearing {sid}")
-                remove_group(sid)
+        try:
+            async with iterm2.KeystrokeMonitor(connection) as monitor:
+                log("keystroke loop: monitoring all sessions")
+                while True:
+                    # NOTE: we intentionally ignore keystroke CONTENT. We never
+                    # read or log ks.characters; we only use the fact that a key
+                    # was pressed in the focused session.
+                    await monitor.async_get()
+                    sid = focused_session_id()
+                    if not sid:
+                        continue
+                    now = time.monotonic()
+                    if now - last_cleared.get(sid, 0.0) < KEYSTROKE_COOLDOWN:
+                        continue
+                    last_cleared[sid] = now
+                    log(f"keystroke in focused session; clearing {sid}")
+                    remove_group(sid)
+        except Exception as e:  # noqa: BLE001
+            log(f"keystroke loop ERROR: {e!r}")
 
     await asyncio.gather(focus_loop(), keystroke_loop())
 
