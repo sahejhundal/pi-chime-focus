@@ -15,6 +15,13 @@ API). Logs session ids it sees to ~/.config/pi-chime-focus/clear.log so the id
 scheme can be verified against $ITERM_SESSION_ID.
 """
 
+import sys
+
+# Never write __pycache__/*.pyc next to this file. iTerm2 scans the AutoLaunch
+# folder and tries to "run" every entry; a stray __pycache__ dir shows up as a
+# malformed script ("Cannot Run Script __pycache__"). This keeps the folder clean.
+sys.dont_write_bytecode = True
+
 import asyncio
 import os
 import subprocess
