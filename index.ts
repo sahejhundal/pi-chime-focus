@@ -244,25 +244,38 @@ const notifyOsascript = (title: string, body: string, sound?: string): void => {
   execFile("osascript", ["-e", script], () => {});
 };
 
+/** terminal-notifier reads every option value through NSUserDefaults, which
+ *  tries to parse it as a property list. A value whose first character is one
+ *  of [ ( { " < - is misread: for -message/-title the notification is NOT SENT
+ *  (exit 2), and for -execute the click action is silently DROPPED (the click
+ *  then logs `command: (null)` and does nothing). Leading whitespace does not
+ *  help. A leading backslash fixes it and terminal-notifier strips it, so the
+ *  text displays normally. Verified against the real binary + NSUserDefaults. */
+const tnSafe = (s: string): string => {
+  const t = s.trimStart();
+  return /^[\[({"<-]/.test(t) ? `\\${t}` : t;
+};
+
 const notifyTerminalNotifier = (
   bin: string,
   title: string,
   body: string,
   guid: string | undefined,
   sound: string | undefined,
-  onUnauthorized: () => void,
+  onFailure: () => void,
 ): void => {
-  const args = ["-title", title, "-message", body || " "];
+  const args = ["-title", tnSafe(title) || "Pi", "-message", tnSafe(body) || " "];
   if (guid) {
     args.push("-group", `pi-chime-${guid}`);
-    args.push("-execute", `"${FOCUS_SCRIPT}" ${guid}`);
+    // MUST NOT start with a quote (see tnSafe): lead with /bin/bash.
+    args.push("-execute", `/bin/bash "${FOCUS_SCRIPT}" ${guid}`);
   }
   if (sound) args.push("-sound", sound);
   execFile(bin, args, (err) => {
-    // Exit 3 = not authorized, 4 = no GUI, 5 = refused. Fall back so the user
-    // still gets *some* notification.
-    const code = (err as { code?: number } | null)?.code;
-    if (err && (code === 3 || code === 4 || code === 5)) onUnauthorized();
+    // Any non-zero exit means nothing was posted (2 = unreadable value,
+    // 3 = not authorized, 4 = no GUI, 5 = refused). Fall back to a plain
+    // notification so the user always gets *something*.
+    if (err) onFailure();
   });
 };
 

@@ -94,6 +94,13 @@ Settings UI: `/chime-focus` inside Pi (test, change sound, toggle, install daemo
 
 ## Troubleshooting
 
+- **Click does nothing / message never appears**: terminal-notifier reads every option value
+  through `NSUserDefaults`; a value starting with `[ ( { " < -` is misread. For `-message`/`-title`
+  the notification is not sent (exit 2); for `-execute` the click action is silently dropped (the
+  system log shows `command: (null)` on click). The extension escapes these with a leading
+  backslash and starts `-execute` with `/bin/bash`. Read click results in Console.app / `log show
+  --predicate 'process == "terminal-notifier"'`.
+
 - **No notifications**: run `~/Applications/terminal-notifier.app/Contents/MacOS/terminal-notifier -diagnose`.
   `authorization: denied` → enable it in System Settings → Notifications.
 - **Not clearing on focus**: check the daemon is running (`pgrep -fl pi-chime-clear.py`)
