@@ -32,6 +32,8 @@ import { homedir } from "node:os";
 interface ChimeConfig {
   sound?: string;
   enabled?: boolean;
+  /** Also notify for subagent sessions (pi-sessions handoff launch=subagent). Default false. */
+  notifySubagents?: boolean;
 }
 
 const CONFIG_DIR = join(homedir(), ".config", "pi-chime-focus");
@@ -71,6 +73,29 @@ const getSound = (): string | undefined => {
 };
 
 const isEnabled = (): boolean => loadConfig().enabled !== false;
+
+const notifySubagents = (): boolean => loadConfig().notifySubagents === true;
+
+/** True when this pi session was launched as a SUBAGENT by pi-sessions.
+ *  pi-sessions writes a `pi-sessions.handoff-bootstrap` custom entry near the
+ *  start of the child session with `data.launch === "subagent"`. (User
+ *  handoffs/forks also set header.parentSession, so that is NOT a reliable
+ *  signal; this entry is.) Only the first few entries are scanned. */
+const isSubagentSession = (ctx: unknown): boolean => {
+  try {
+    const entries = (ctx as any)?.sessionManager?.getEntries?.() ?? [];
+    const limit = Math.min(entries.length, 25);
+    for (let i = 0; i < limit; i++) {
+      const e = entries[i];
+      if (e?.type === "custom" && e.customType === "pi-sessions.handoff-bootstrap" && e.data?.launch === "subagent") {
+        return true;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+};
 
 // ── Platform / terminal detection ─────────────────────────────────────────────
 
@@ -390,6 +415,8 @@ export default (pi: ExtensionAPI): void => {
 
   pi.on("agent_end", (event, ctx) => {
     if (!isEnabled()) return;
+    // Only the main session you work in should notify, not subagents.
+    if (!notifySubagents() && isSubagentSession(ctx)) return;
     try {
       const sctx = ctx as unknown as SessionCtx;
       const body = lastAssistantText(((event as any).messages ?? []) as AnyMsg[]);
@@ -417,8 +444,11 @@ export default (pi: ExtensionAPI): void => {
 
   // User typed / sent input in this tab -> they're engaged here, so drop this
   // session's stale notification (covers "type to clear" while staying on tab).
-  pi.on("input", () => {
+  pi.on("input", (_event, ctx) => {
     try {
+      // Subagents run in tmux and can inherit the LAUNCHER's ITERM_SESSION_ID,
+      // so their input must never clear the main session's notification group.
+      if (isSubagentSession(ctx)) return;
       clearPending();
       removeOwnGroup();
     } catch {

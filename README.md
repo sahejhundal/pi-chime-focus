@@ -83,11 +83,12 @@ Three cooperating pieces:
 `~/.config/pi-chime-focus/config.json`
 
 ```json
-{ "sound": "Glass", "enabled": true }
+{ "sound": "Glass", "enabled": true, "notifySubagents": false }
 ```
 
 - `sound`: a macOS system sound name (`Glass`, `Purr`, `Hero`, `Ping`), or `"none"`.
 - `enabled`: set `false` to mute.
+- `notifySubagents`: default `false`. Subagent sessions (pi-sessions handoffs launched as `subagent`) never notify or clear notifications, so you only hear about the main session you work in. Set `true` to also get subagent notifications.
 
 Settings UI: `/chime-focus` inside Pi (test, change sound, toggle, install daemon).
 
